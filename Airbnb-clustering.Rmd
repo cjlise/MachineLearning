@@ -12,7 +12,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# The goal of this study is to cary out unsupervised clustering on Airbnb listing data in Paris. We will use hierachic clustering and K-means plus PCA for the visualization.
+The goal of this study is to cary out unsupervised clustering on Airbnb listing data in Paris. We will use hierarchical clustering and K-means plus PCA for the visualization.
 
 ## Loading data
 
@@ -31,12 +31,16 @@ summary(X)
 
 There are 10000 observations of 63 variables. There are 32 numeric variables and the remaining ones are factors or logical variables. 
 
+Keeping only apartments
 
 ```{r}
 # filtering only apartments:
 A <- X[X$property_type == 'Apartment',]
 
 ```
+
+
+All the columns related to price display prices in character format, prefixed by "$" and with "," for thousand delimiter. We will convert below those colums from characters to numeric using as.numeric and gsub functions.  
 
 ```{r}
 # Changing the price columns from character to numeric 
@@ -47,6 +51,11 @@ A$security_deposit <- as.numeric(gsub('\\$|,', '', A$security_deposit))
 A$cleaning_fee <- as.numeric(gsub('\\$|,', '', A$cleaning_fee))
 A$extra_people <- as.numeric(gsub('\\$|,', '', A$extra_people))
 ```
+
+In the section below, we will:      
+* Drop columns with only missing values   
+* For all numeric columns, replace missing value with median   column value    
+* double check that there is no remaining missing values   
 
 ```{r}
 # Checking missing values
@@ -75,8 +84,17 @@ for (nm in names(nums)){
 colSums(is.na(A))
 
 ```
+Check that there his no issue with the processed data by plotting an histogram of price variable. 
+
+```{r}
+hist(A$price, breaks = 50,freq=FALSE)
+
+```
+
+
+
 ### Filter the features
-We will only keep the numeric features 
+We will only keep the numeric features  
 
 
 ```{r}
@@ -89,50 +107,126 @@ B <- A[,nums]
 ## Clustering
 
 
-### Hierarchical clustering
+### Hierarchical clustering - Ward distance
 
-Hierarchical clustering shows visually 7 main clusters. 
+
+Hierarchical clustering shows visually 5 main clusters. 
 
 ```{r}
 D <- dist(B)
 out <- hclust(D,method = "ward.D2")  # Using Ward distance
 plot(out)
 
-K1 = 7
+K1 = 5
 res1 = cutree(out, K1)
 rect.hclust(out,K1)
 
 ```
+   
+The visualization is not very good. We only  see clearly the main  4 clusters. 
 
-We can also display the clustering using a map.
+We can also display the clustering using a map.  
 
 ```{r}
 #install.packages('leaflet')
 library(leaflet)
 
 palette = colorFactor("RdYlBu", domain = NULL)
-leaflet(A) %>% addTiles() %>% addCircleMarkers(radius = 3, color = palette(c(seq(K1))),stroke = FALSE, fillOpacity = 0.9)
+leaflet(B) %>% addTiles() %>% addCircleMarkers(radius = 3, color =
+     palette(res1),stroke = FALSE, fillOpacity = 0.9) %>%
+  addLegend("bottomright", pal = palette, values = res1,
+    title = "Clusters",
+    opacity = 1
+  )
+#palette(c(seq(K1))),stroke = FALSE, fillOpacity = 0.9)
 #%>% addTiles() %>% addCircleMarkers(radius = 3, color = palette(out),stroke = FALSE, fillOpacity = 0.9)
 
 ```
+   
+We see that there is one big cluster (cluster 1) and other smaller clusters (2, 3). The clusters generally are not tied to a specific Paris location, except for the cluster 5 that is located on the 16th district.   
+
+
+Here is a picture of the rendering: 
+![Airbnb-Paris-Ward](Airbnb-Paris-Clustering-Ward.jpg "Airbnb-Paris-Ward")
 
 
 
+### Hierarchical clustering - other distances  
+* Single distance   
+```{r}
+#D <- dist(B)
+out <- hclust(D,method = "single")  # Using single distance
+plot(out)
+
+K1 = 5
+res1 = cutree(out, K1)
+rect.hclust(out,K1)
+
+
+```
+We see basically a single cluster, the result is not good.  
+
+* Centroid distance  
+
+
+```{r}
+out <- hclust(D,method = "centroid")  # Using centroid distance
+plot(out)
+
+K1 = 5
+res1 = cutree(out, K1)
+rect.hclust(out,K1)
+
+```
+
+Again, we see a single cluster, and we can confirm that the custering generated is not good.  
+
+* Complete distance  
+
+```{r}
+out <- hclust(D,method = "complete")  # Using complete distance
+plot(out)
+
+K1 = 5
+res1 = cutree(out, K1)
+rect.hclust(out,K1)
+
+
+```
+   
+Here we are able to identify 2 clusters, but it's still a very unbalanced clustering. 
 
 
 ### k-means clustering
 
-We apply the k-mean clustering with 7 clusters as suggested by the hierarchical clustering. 
+We apply the k-mean clustering with 5 clusters as suggested by the hierarchical clustering. 
 
 ```{r}
 library(class)
-
-outk = kmeans(B,7, nstart= 15)
-outk
+set.seed(1234)
+outk = kmeans(B,5, nstart= 15)
+#outk
 
 ```
-We see that the between class sum of squares divided by the total sum of squares is 76.8 %. 
+We see that the between class sum of squares divided by the total sum of squares is 66.7 %. 
 
+
+```{r}
+palette = colorFactor("RdYlBu", domain = NULL)
+leaflet(B) %>% addTiles() %>% addCircleMarkers(radius = 3, color =
+     palette(outk$cluster),stroke = FALSE, fillOpacity = 0.9) %>%
+  addLegend("bottomright", pal = palette, values = outk$cluster,
+    title = "Clusters",
+    opacity = 1
+  )
+
+
+```
+
+We see that the KMeans clustering is more balanced. And we also notice that cluster 5 is more located on the West area (16th - 17th district).
+
+
+![Airbnb-Paris-KMeans](Airbnb-Paris-Clustering-KMeans.jpg "Airbnb-Paris-KMeans")
 
 
 Next we will evaluate the best k for the k-means algorithm  
@@ -147,7 +241,8 @@ plot(1:15,J,type='b')
 
 ```
 
-We get the confirmation that the best k is k=7.
+We get the confirmation that the best k is k=5.
+
 
 
 ## Data visualization
@@ -160,12 +255,10 @@ out <- princomp(B,cor=TRUE)
 #out = princomp(B)
 Xproj <-  predict(out,B)
 biplot(out)
-summary(out)
+#summary(out)
 ```
 
 Variance explained plot
-
-
 
 ```{r}
 var_explained <- out$sdev^2/sum(out$sdev^2)
@@ -205,8 +298,8 @@ myPCA <- function(X,d=2){
   # Return the PC axes and plot the projection
   U = out$vectors[,1:d]
   Xproj = as.matrix(X) %*% U
-  if (d <= 2) plot(Xproj,type='p',pch=19)
-  else pairs(Xproj,pch=19)
+#  if (d <= 2) plot(Xproj,type='p',pch=19)
+#  else pairs(Xproj,pch=19)
   return(list(U=U,lambda=out$values))
 }
 ```
@@ -218,15 +311,15 @@ diff = abs(diff(out$lambda))
 plot(diff)
 abline(h=0.1*max(diff),col='red')
 
-
 ```
+
 ### Retry the analysis by removing some features
 
 Try to rerun the clustering by filtering out some of the numeric features: 
 
 
 
-```{r}
+```{r include=FALSE}
 # Filter the features to keep for the analysis  
 #
 library(tidyverse)
@@ -244,25 +337,31 @@ A %>% select("host_listings_count", "latitude", "longitude",
 ### Retry the K-Means algorithm
 
 ```{r}
-outk = kmeans(B,7, nstart= 15)
-outk
+set.seed(1234)
+outk = kmeans(B,5, nstart= 15)
+#outk
 
 ```
 
 We have a better clustering result. 
 
-Let's chakc PCA again: 
-
 ```{r}
-out = PCA(B)
-plot(out)
+palette = colorFactor("RdYlBu", domain = NULL)
+leaflet(B) %>% addTiles() %>% addCircleMarkers(radius = 3, color =
+     palette(outk$cluster),stroke = FALSE, fillOpacity = 0.9) %>%
+  addLegend("bottomright", pal = palette, values = outk$cluster,
+    title = "Clusters",
+    opacity = 1
+  )
+
+
 ```
 
-
+![Airbnb-Paris-KMeans-Final](Airbnb-Paris-Clustering-KMeans-Final.jpg "Airbnb-Paris-KMeans-Final")
 
 
 ## Summary
-We used unsupervised clustering algorithms on an Airbnb Paris listing dataset. Both Hierarchical clustering identified 7 as the optimal number of clusters. It was not obvious to visualize this clustering however. Afterwards we used PCA to visualize the faetures with higher impact. We also tried to rerun the K-Means algorithm with a subset of features. 
+We used unsupervised clustering algorithms on an Airbnb Paris listing dataset. Both Hierarchical clustering identified 7 as the optimal number of clusters. It was not obvious to visualize this clustering however. Afterwards we used PCA to visualize the features with higher impact. And we removed a subset of features that were not relevant according PCA and we ran K-Means again, and found a more balanced clustering.
 
 
 
