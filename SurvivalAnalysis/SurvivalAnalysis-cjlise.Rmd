@@ -1,0 +1,436 @@
+---
+title: "Survival Analysis Project - José Lise"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+# Employee turnover study using survival analysis 
+
+The goal of this project is to carry out the analysis of employee churn. 
+We will work with a dataset available on [github](https://github.com/ludovicbenistant/Management-Analytics/blob/master/HR/HR.csv). The dataset description is also available on [kaggle](https://www.kaggle.com/c/employee-churn-prediction/data), althouth it cannot be freely downloaded from there.  
+
+Here is the dataset description: it's a csv file with 15 000 rows (1 row for column headers and 14 499 rows for employees information) and 10 columns.  
+  
+Here are the columns description:    
++ satisfaction_level - Employee satisfaction level    
++ last_evaluation - Last evaluation score    
++ number_project - Number of projects assigned to  
++ average_monthly_hour - Average monthly hours worked  
++ time_spend_company - Time spent at the company in years. Between 2 and 10.  
++  Work_accident - (1= Yes, 0 = No) - Whether they have had a work accident  
++ left - Whether or not employee left company (1 = Yes, 0 = No). This is the censoring information.   
++ promotion_last_5year - (1 = Yes, 0 = No) - Whether they have had a promotion in the last 5 years  
++ sales - Department name (not just sales)  
++ salary - Salary category  
+
+## Data processing 
+### Loading data
+The following cell load the data from the csv file and assign column types numeric or character according the data stored. 
+
+
+```{r include=FALSE}
+library(tidyverse)
+raw <- read_delim("HR.csv",  delim=";", col_names=TRUE,
+           col_types = cols(satisfaction_level = 'd',
+                            last_evaluation = 'd',
+                            number_project = 'd',
+                            average_montly_hours = 'd',
+                            time_spend_company = 'd',
+                            Work_accident = 'd',
+                            left='d',
+                            promotion_last_5years = 'd',
+                            sales = 'c',
+                            salary = 'c'))
+```
+
+### Data transformation
+In the following cell, we transform the data to assign factors to obvious categorical variables (promotion_last_5years, Work_accident, sales and salary).   
+In addition, we also manage number_project as a categorical variable even it can be seen as an integer numeric variable. This decision was taken after a first exploratory analysis of the data. 
+
+```{r}
+# Assign factor level for promotion_last_5years, Work_accident, number_project, sales and salary
+# Rename sales column to department (it's less confusing) 
+h <- mutate(raw,
+            Work_accident = factor(Work_accident, levels=c('0','1'), labels = c('no', 'yes')),
+            promotion_last_5years = factor(promotion_last_5years,levels=c('0','1'),
+                                           labels = c('no', 'yes')),
+            number_project = factor(number_project),
+            sales = factor(sales),        
+            salary = factor(salary))
+
+h <- h %>% rename(department = sales)
+```
+
+### Exploratory analysis
+
+```{r}
+summary(h)
+```
+
+We see that there are no missing values. The time variable that we will use for our survival analysis is **time_spend_company**.It's a time in years and goes from 2 to 10 years. The censoring variable is called *left*: it's 1 if the employee has left the company and 0 otherwise.   
+**satisfaction_level** and **last_evaluation** are decimal numbers between 0 and 1.  
+**number_project** is an integer number in the range 2 to 7 managed as a categorical variable.   
+**average_montly_hours** is an integer number in the range 96 to 310. 
+There are 2 binaries categorical variables: **Work_accident** and **promotion_last_5years**.
+And the last 2 variables *department* and *salary* are also categorical but with at least 3 levels. 
+
+
+```{r}
+hist(h$time_spend_company)
+
+```
+
+We see that employees start leaving the company after 2 years. The peak duration is 3 years. 
+The number of employees leaving the company decrease from 3 years to 6 years. And from 6 years to 10 years there is almost no change. 
+
+
+
+Check how many employees left the company.
+
+```{r}
+table(h$left)
+
+```
+Out of the 14 499 employees, 3571 left. 
+
+### Satisfaction level, Last evaluation and Average monthly hours
+
+Global histograms
+```{r}
+par(mfrow=c(1,3))
+hist(h$satisfaction_level, col = 'blue', main="Global satisfaction level")
+hist(h$last_evaluation, col = 'blue', main="Global last evaluation")
+hist(h$average_montly_hours, col = 'blue', main="Global average montly hours")
+```
+
+For the employees who left.
+```{r}
+par(mfrow=c(1,3))
+hist(h$satisfaction_level[h$left == 1], col='red', main='Left satisfaction level')
+hist(h$last_evaluation[h$left == 1], col='red', main='Left last evaluation')
+hist(h$average_montly_hours[h$left == 1], col='red', main='Left average montly hours')
+```
+The satisfaction histogram for employee who left shows that they are very unsastified or neutral. And a significant part was above average satisfied.   
+For the last evalation, most of the employees who left were average or below average. And a signicant amount was above average.  
+For the working hour, most of the employees who left were in the lower bucket( 150 hours or less). 
+
+
+
+### Work accident and promotion 
+Global barplots
+
+```{r}
+par(mfrow=c(1,2))
+barplot(prop.table(table(h$Work_accident)) , main="Global work accident")
+barplot(prop.table(table(h$promotion_last_5years)), main="Global promotion last 5years")
+```
+
+Left barplots
+
+```{r}
+par(mfrow=c(1,2))
+barplot(prop.table(table(h$Work_accident[h$left == 1])), main="Left work accident")
+barplot(prop.table(table(h$promotion_last_5years[h$left == 1])), main="Left promotion last 5years")
+```
+The proportion of work accident is lower in the population that left. And the proportion of promotion in the last 5 years is also lower for the employees that left.  
+
+
+### Department, salary and number of projects
+Global barplots
+
+```{r}
+par(mfrow=c(1,3))
+barplot(table(h$department) , main="Global department")
+barplot(table(h$salary), main="Global salary")
+barplot(table(h$number_project), main="Global Number of projects")
+```
+Left barplots
+
+
+```{r}
+par(mfrow=c(1,3))
+barplot(table(h$department[h$left == 1]), main="Left department")
+barplot(table(h$salary[h$left == 1]), main="Left salary")
+barplot(table(h$number_project[h$left == 1]), main="Left Number of projects")
+```
+From the plot above, we can already think that there is a higher risk (of leaving company)  for employees with low salaries.
+
+
+## Kaplan-Meier estimator
+We draw below the Kaplan-Meier survival curve. 
+
+```{r}
+library(survival)
+St <- survfit(Surv(time_spend_company,left) ~ 1, data = h)
+St
+plot(St, main="Kaplan-Meier estimator", xlab="Years", ylab="Survival probability")
+```
+
+The median value returned by the survfit function is 6 years. Therefore the average lifetime at the company for an employee is 6 years. The confidence interval for the median is (5,6) in years. We also notice that the survival probability is constant after 6 years. 
+
+
+
+Survival curve by salary 
+```{r}
+Sts <- survfit(Surv(time_spend_company,left) ~ salary, data = h)
+Sts
+plot(Sts, col=c('black','red','blue'),main="Survival curve by salary", xlab="Years", ylab="Survival")
+legend("bottomleft", legend=levels(h$salary),
+       col=c("black", "red", "blue"), lty=1, cex=0.8)
+
+```
+We see that the median for salary=high is undefined, because for this category the survival function is always above 0.5. The group with higher risk is salary=low group. The median for this group is 5 years, whereas it's 6 years for the medium group. 
+
+
+### Comparing groups
+We will compare the groups for categorical varaiables using the log rank test: Work_accident, promotion_last_5years, number_project, department, and salary.
+
+```{r}
+test_variable <- function(var_name) {
+  h$x <- h[[ var_name ]]
+  survdiff(Surv(time_spend_company,left) ~ x, data = h)
+}
+
+logrank_tests <-
+  tibble(variable = c("Work_accident", "promotion_last_5years","number_project", "department", "salary")) %>%
+  mutate(obj = map(variable, test_variable),
+         tab = map(obj, broom::glance)) %>%
+  unnest(tab)
+logrank_tests
+
+
+#survdiff(Surv(time_spend_company,left) ~ salary, data = h)
+
+```
+
+The table above lists the p-values for the log-rank test for the 5 selected features. And they all are zero.Therefore we reject the null hypothesis for all the variables and there is a significant difference between the groups inside each variable.  
+
+
+
+## Data Modeling and Machine Learning
+
+### Split the data randomly into a training and a testing set
+
+
+Reshape the data for the modeling section 
+
+```{r}
+hm <- h 
+hm <- select(hm, -c(time_spend_company, left))
+summary(hm) 
+```
+
+```{r}
+y <- Surv(h$time_spend_company, h$left)
+
+```
+
+### Creating Training and Testing sets
+
+We will split the 14499 rows in 2 sets: 10000 row for training and 4999 for testing.
+
+```{r}
+set.seed(1234) # >To make the results replicable
+i.training <- sample.int(nrow(hm), size = 10000, replace = FALSE)
+i.testing <- setdiff(seq_len(nrow(hm)), i.training)
+
+h.training <- hm[i.training,, drop = FALSE]
+y.training <- y[i.training,, drop = FALSE]
+
+h.testing <- hm[i.testing,, drop = FALSE]
+y.testing <- y[i.testing,, drop = FALSE]
+```
+
+### Cox regression
+
+```{r}
+fit <- coxph(y.training ~ ., data = h.training)
+summary(fit)
+```
+Cox Hazard Ratio Analysis:
+Most of the coefficients are significants (P-values very small or less than 5%) except for some of the department levels. 
+
+The variable with the more significant coefficient is number_project3. And this coefficient is negative and therefore reduce the risk: Working on 3 projects reduce the risk by a factor 49 CI(36, 66) compared to working on 2 projects (which is the reference level). 
+And we see also that working on 4 projects decrease the risk by a factor 11.9 CI( 10.3, 13.7)compared to working on 2 projects.And the risk is decreased  by a factor 7 CI(6.2,8), 4.9 CI(4.2, 5.6) and 3.2 CI(2.6, 3.9) for respectively 5, 6 and 7 projects. 
+
+The next most significant feature in the satisfaction level: An increase by one unit (which is the full range) reduces the risk by a factor 3.95 CI(3.3, 4.8) .
+
+Then in the significance level we have the salary impact: risk is increased by a factor 3.38 CI(2.6, 4.4) from Salary_high to Salary_low, and by a factor 2.4 CI(1.8, 3.2) from salary_high to salary_medium. 
+
+Then we have in terms of significance level: promotion_last_5yearsyes. A promotion in the last 5 years reduce the risk by a factor 3.5 CI (2,6.3) compared to no promotion.
+
+Next significant variable is Work_accidentyes: The risk is reduced by a factor 2.9 CI( 2.4,3.5) compared to Work_accidentNo. This is counter intuitive, but looking at the exploratory plot, the proportion of Work_accidentyes is lower for people who left. 
+
+There is not much difference in hazard ratio coefficient for the department variable. The higher evidence, is that risk for R&D departent compared to accounting is lower by a factor 1.6 CI(1.2, 2.2). 
+
+
+
+### Model 1 - AIC Step
+In this section we will the step function to select the model with the lower AIC. 
+
+```{r}
+fit.aic <- step(fit)
+summary(fit.aic)
+b.aic <- coef(fit.aic)
+
+```
+The AIC step function finds that the best model (lower AIC)  is the model with all the variables. 
+
+The Concordance is 0.911 and therefore is quite high.
+
+#### Models testing: AIC
+In the following section, we will test the model selected by AIC. 
+We apply the model previously fitted to the testing dataset, to get the scoreAIC.testing. 
+
+```{r}
+scoreAIC.testing <- predict(fit.aic, newdata = h.testing)
+hist(scoreAIC.testing)
+
+```
+The score is in the range (-4, 3). 
+y.testing is a censored variable and scoreAIC.testing is assumed to be a continuous predictor of this variable.
+A continuous predictor vs a right-censored time-to-failure outcome: therefore we can use Cox regression.
+
+```{r}
+summary(coxph(y.testing ~ scoreAIC.testing))
+
+```
+Coefficient is positive(1.04) therefore higher score means higher risk. 
+The hazard ratio is 2.83 with confidence interval  (2.67, 2.98).
+And as the p-value is small, this means this coefficient is significant. 
+
+We also notice that the concordance is very high: 0.913 with a standard error of 0.005. 
+This model score is very good, but we use all the features provided. 
+Let's see if we can reduce the number of features while keeping the same kind of performance. 
+
+
+### model 2. elastic net
+
+```{r include=FALSE}
+library(glmnet)
+# we remove the intercept to get a matrix with only the covariates
+X <- model.matrix( ~ . -1, data = h.training)
+fit.cv10 <- cv.glmnet(X, y.training, family = "cox")
+```
+
+
+plotting
+
+```{r}
+plot(fit.cv10)
+```
+We select Lambda.1se the less conservative lambda, which is also the lambda with the lower number of coefficients. 
+
+
+```{r}
+b <- coef(fit.cv10, s = "lambda.1se")
+sum(b != 0)
+b.enet <- b[b != 0]
+```
+Lambda.1se has 15 non null coefficients.
+
+
+```{r}
+round(b[abs(b) > 1e-3 ], digits = 3)
+```
+
+#### Model testing: elastic net
+
+```{r}
+X.testing <- model.matrix( ~ . -1 , data = h.testing)
+score.testing <- predict(fit.cv10, newx = X.testing, s = "lambda.1se")
+hist(score.testing)
+```
+Higher score means higher risk and then lower survival.
+The score is in the range (-3, 3). 
+
+y.testing is a censored variable and score.testing is assumed to be a continuous predictor of this variable.
+A continuous predictor vs a right-censored time-to-failure outcome: we can use Cox regression.
+
+```{r}
+summary(coxph(y.testing ~ score.testing))
+```
+Coefficient is positive (1.22) therefore higher score means higher risk. 
+The hazard ratio is 3.38 with confidence interval  (3.189, 3.594).
+And as the p-value is small, this means this coefficient is significant. 
+
+And the concordance is the same as with the previous model: 0.913 with a slightly higher SE of 0.006. 
+
+And this model is smaller than the other one we will carry out some additional analysis with it. 
+
+#### Low and high categories risk 
+We can split the scores into 2 categories, and compare employees with 'low' vs 'high' score:
+
+```{r}
+x_risk <- ifelse(score.testing <= median(score.testing), "low", "high")
+table(x_risk)
+```
+
+
+```{r}
+fit.KM <- survfit(y.testing ~ x_risk, conf.type = "log-log")
+plot(fit.KM, col=c('red','blue'),main="Survival curve by risk level", xlab="Years", ylab="Survival")
+legend("bottomleft", legend=c("high", "low"),
+       col=c( "red", "blue"), lty=1, cex=0.8)
+```
+
+Using the log rank test to check the difference between low and high risk. 
+```{r}
+survdiff(y.testing~ x_risk)
+
+```
+The p-value is zero, therefore the difference between high risk and low risk is significant. 
+
+
+```{r}
+fit.KM
+```
+
+We see that the median is 5 years CI(5,5) for low risk. And the median is undefined for high risk (the survival is always above 0.5). 
+
+Survival at 4 years:
+```{r}
+
+summary(fit.KM, time = 4)
+
+```
+At 4 years, the survival is 0.56 CI(0.53, 0.58)  for the high risk population and 0.97 CI(0.96, 0.9) for the low risk. 
+
+
+AUC index at 4 years
+
+```{r}
+library(survivalROC)
+ROC <- survivalROC(Stime = y.testing[, 1],
+                   status = y.testing[, 2],
+                   marker = score.testing,
+                   cut.values = quantile(score.testing, prob = 0:100/100),
+                   predict.time = 4,
+                   method = "KM")
+ROC$AUC
+
+
+```
+The AUC at 4 years is 0.82, therefore quite high. 
+
+
+
+
+## Conclusion
+
+We analyzed the employees turnover of a company using survival analysis modeling over a period of 10 years. 
+After an exploratory analysis, we computed the Kaplan-Meier estimator for survival probability. Then we identified that the median survival at the company is 6 years: the expected time spent at the company is 6 years. 
+Then we use the log rank test to check if the levels in the 5 categorical features have an impact on the survival. The log rank test was positive for all the categorical variables. 
+
+We then splitted the initial 14499 rows dataset in one training dataset of 10000 rows and a testing dataset of 4999 rows, before to carry out the modeling part. 
+
+We first did ran a cox regression on the training set and idenfied hazard ratio coefficients with the most impact on the risk: the number of projects. And specifically between 2 and 3 projects there is a factor of 44. 
+
+We then tried to do model selection using AIC and GLMNET. 
+AIC returned the full model as the best model and GLMNET returned a model with 15 coefficients out of 20. 
+
+We then carried out some predictions using the test dataset and use cox regression again to assess the accuracy of the models. Both model gave a very high concordance of 0.913. 
+
+
+
