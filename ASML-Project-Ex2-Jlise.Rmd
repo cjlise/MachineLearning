@@ -1,0 +1,699 @@
+---
+title: "ASML Project - Exercise 2 - Titanic analysis - José Lise - DSTI S19"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+The goal is to carry out the Titanic data classification analysis. We will use the [Titanic dataset](https://www.kaggle.com/c/titanic/data) available on [Kaggle](https://www.kaggle.com/) web site.
+In detail, this is a binary classification problem. The model must be able to predict survival or not with a good accuracy on the test sample. 
+
+The data has been splitted into two groups:  
+
+* training set (train.csv)  
+* test set (test.csv)  
+
+*The training* set will be used to build the machine learning models. For the training set, is provided the outcome (also known as the “ground truth”) for each passenger.
+
+*The test* set will be used to see how well the models perform on unseen data. For the test set, the ground truth for each passenger is not provided. It is the models' job to predict these outcomes. For each passenger in the test set, we will use the trained model to predict whether or not they survived the sinking of the Titanic. And as we don't have the outcome for the test set, we will submit our prediction to the kaggle web site to get our score. 
+
+
+## Loading the data
+
+```{r}
+setwd("D:/OneDrive - Data ScienceTech Institute/DSTI/AdvanceStatisticsMachineLearning/Project")
+train <- read.csv("titanic/train.csv", stringsAsFactors=FALSE, header=TRUE, sep=',')
+test <-  read.csv("titanic/test.csv", stringsAsFactors=FALSE, header=TRUE, sep=',')
+```
+
+## check the train data frame 
+
+```{r}
+str(train)
+
+```
+
+There are 891 observations of  12 variables. 5 variables are integers, 5 are characters and 2 are numeric. 
+
+Summary train
+
+```{r}
+summary(train)
+```
+
+The summary above already shows that there are 177 missing rows for the age variable.
+
+## Variables description  
+
+Here are the short description of the variables in the dataset: 
+   
+* PassengerId: Identification number for passengers  
+* Survived: Indicates if the passenger survived: 0=NO, 1=YES    
+* Pclass: Ticket Class: 1=1st, 2=2nd, 3=3rd   
+* Sex: Female, Male  
+* Age: Age in years
+* SibSp: \# of sibling/Spouses abroard the Titanic
+* Parch: \# of Parents/Children abroad the Titanic 
+* Ticket: Ticket number 
+* fare: Passenger fare 
+* cabin: Cabin number
+* embarked: Port of Embarkation: C=Cherburg, Q=Queenstown, S=Southampton
+
+Here are some additionnal information for the variables: 
+*pclass*: A proxy for socio-economic status (SES)  
+
+* 1st = Upper 
+* 2nd = Middle  
+* 3rd = Lower  
+
+*age*: Age is fractional if less than 1. If the age is estimated, is it in the form of xx.5
+
+*sibsp*: The dataset defines family relations in this way:  
+
+* Sibling = brother, sister, stepbrother, stepsister  
+* Spouse = husband, wife (mistresses and fiancés were ignored)  
+
+*parch*: The dataset defines family relations in this way:  
+
+* Parent = mother, father  
+* Child = daughter, son, stepdaughter, stepson  
+Some children travelled only with a nanny, therefore parch=0 for them.
+
+
+check the test data frame
+
+```{r}
+str(test)
+
+```
+
+Test data set contains 418 observation of  11 variables. As expected, the survived variable is missing from this data set. 
+
+
+Test summary
+```{r}
+summary(test)
+```
+keep raw train, and test data sets for future use during the modeling part. However we will transform the variables Pclass, Sex and Embarked to factors. 
+
+```{r}
+
+train_raw <- train
+test_raw <- test
+
+train_raw$Pclass <- factor(train_raw$Pclass)
+train_raw$Sex <- factor(train_raw$Sex)
+train_raw$Embarked <- factor(train_raw$Embarked, exclude="")
+
+test_raw$Pclass <- factor(test_raw$Pclass)
+test_raw$Sex <- factor(test_raw$Sex)
+test_raw$Embarked <- factor(test_raw$Embarked, exclude="")
+
+test_raw$Survived <- 0
+all_raw <- rbind(train_raw,test_raw)
+
+```
+
+
+Merge train and test data set for exploratory analysis 
+
+```{r}
+# Create a Survided column for the test dataset anf fill it with 0
+test$Survived <- 0
+all <- rbind(train,test)
+```
+## Handling Missing Data 
+
+```{r}
+summary(all)
+
+```
+
+In the cell below, we transform the Sex and Embarked variables to factors. 
+
+```{r}
+
+all$Sex <- factor(all$Sex)
+all$Embarked <- factor(all$Embarked, exclude="")
+
+summary(all)
+```
+
+Summary of the missing data
+
+```{r}
+sapply(all, function(attribute) {sum(is.na(attribute)==TRUE)/ length(attribute)
+;})
+
+
+```
+
+The output above shows that there are mising values for variables Age, Fare and Embarked. 
+We addressed the missing data for Fare and Embarked in the following way:   
+
+* Assign missing Embarked data to the most counted port ('S').
+* Replace the missing Fare data by the mean fare. 
+
+```{r}
+all$Embarked[which(is.na(all$Embarked))] <- 'S'
+all$Fare[which(is.na(all$Fare))] <- mean(all$Fare, na.rm=TRUE)
+
+summary(all)
+
+```
+
+The Cabin column data is managed as character data. However there are many empty strings. Moreover this variable doesn't provide any relevant information. Therefore we will not use this feature for the modeling part. 
+
+```{r}
+sum(all$Cabin == "")/nrow(all)
+
+```
+There are 77% of empty strings for the Cabin column. 
+
+
+Age Missing Data imputation 
+
+1. Check the title frequency 
+
+```{r}
+table_words = table(unlist(strsplit(all$Name, "\\s+")))
+sort(table_words [grep('\\.',names(table_words))], decreasing=TRUE)
+
+```
+
+2. Find missing age by title
+
+```{r}
+library(stringr) 
+tb_data = cbind(all$Age, str_match(all$Name, " [a-zA-Z]+\\."))
+table(tb_data[is.na(tb_data[,1]),2])
+```
+
+3. Compute mean value by titles 
+
+```{r}
+mean.mr = mean(all$Age[grepl(" Mr\\.", all$Name)],na.rm=TRUE)
+mean.mrs = mean(all$Age[grepl(" Mrs\\.", all$Name)],na.rm=TRUE)
+mean.dr = mean(all$Age[grepl(" Dr\\.", all$Name)],na.rm=TRUE)
+mean.miss = mean(all$Age[grepl(" Miss\\.", all$Name)],na.rm=TRUE)
+mean.master =  mean(all$Age[grepl(" Master\\.", all$Name)],na.rm=TRUE)
+
+
+```
+
+4. Apply the mean to the missing data 
+
+```{r}
+all$Age[grepl(" Mr\\.", all$Name) 
+				& is.na(all$Age)] = mean.mr
+all$Age[grepl(" Mrs\\.", all$Name) 
+				& is.na(all$Age)] = mean.mrs
+all$Age[grepl(" Dr\\.", all$Name) 
+				& is.na(all$Age)] = mean.dr
+all$Age[grepl(" Miss\\.", all$Name) 
+				& is.na(all$Age)] = mean.miss
+all$Age[grepl(" Master\\.", all$Name) 
+				& is.na(all$Age)] = mean.master
+# Special case for Ms. that we manage as Miss. 
+all$Age[grepl(" Ms\\.", all$Name) 
+				& is.na(all$Age)] = mean.miss
+```
+
+5. Check that there is no remaining missing age values
+
+```{r}
+sum(is.na(all$Age) == TRUE) /  length(all$Age)
+```
+
+
+
+
+## Data transformation
+
+Manage class and sex as factors instead of numbers 
+```{r}
+all$Pclass <- factor(all$Pclass)
+all$Sex <- factor(all$Sex)
+#all$Embarked <- factor(all$Embarked)
+
+```
+
+Add a variable title
+
+```{r}
+all$Title <- substring(str_extract(all$Name, '\\, \\w*\\.'), 3)
+all$Title <- factor(all$Title)
+#all$Title <- gsub('([[:alpha:]]*\\, )([[:alpha:]]*\\.)([[:alpha:]]*)','\\2',all$Name)
+
+#all$Title <- str_replace(all$Name, '(\\w*)\\, (\\w*\\.)(\\w*)',REF2)
+
+```
+
+
+
+## Exploratory data analysis 
+
+Breakdown by gender
+
+```{r}
+table(all$Sex)
+
+barplot(table(all$Sex), names= c("Female","Male"), col= c("pink", "lightblue"), main="Breakdown by gender")
+
+```
+
+Breakdown by port of Embarkation 
+
+```{r}
+barplot(table(all$Embarked), col=c("lightgreen","lightblue","tomato"), names= c("Cherbourg", "Queenstown", "Southampton"), main="Port of Embarkation")
+```
+
+Breakdown by class 
+
+```{r}
+table(all$Pclass)
+
+barplot(table(all$Pclass), col=c("lightgreen", "lightblue", "tomato"), 
+        names= c("First", "Second", "Third"), main="Breakdown by class")
+```
+
+Breakdown by sex for each class 
+
+
+```{r}
+table(all$Sex, all$Pclass )
+countsTable <- table(all$Sex, all$Pclass )
+barplot(countsTable, col=c("pink", "lightblue"), legend=c("Female", "Male"),
+        names=c("First", "Second", "Third"), main="Passengers breakdown by sex for each class")
+
+```
+Hist distribution by passenger age 
+
+```{r}
+hist(all$Age, main="Passenger age distribution", xlab="Age")
+
+```
+
+
+
+Spliting back the data in train and test sets
+
+```{r}
+dt <- 1:nrow(train) 
+train <- all[dt,]
+#mrow_all <- nrow(all)
+test <- all[-dt,]
+test$Survived <- NULL 
+```
+
+Specific Exploratory analysis of the training data set 
+
+```{r}
+barplot(table(train$Survived), col=c("Tomato", "lightgreen"), 
+        names=c("Perished", "Survived"), legend=c("Perished", "Survived"),
+        main="Perished/Survived Breakdown" )
+
+```
+
+
+Passenger fate by age 
+
+```{r}
+barplot(table(train$Survived, train$Age), col=c("Tomato", "lightgreen"), 
+       legend=c("Perished", "Survived"),
+        main="Passenger fate by age" )
+
+```
+
+
+Passenger fate by sex 
+
+```{r}
+barplot(table(train$Survived, train$Sex), col=c("Tomato", "lightgreen"), 
+       names=c("Female", "Male"), legend=c("Perished", "Survived"),
+        main="Passenger fate by sex" )
+```
+
+Mosaic plot of the same data
+
+
+```{r}
+mosaicplot( train$Sex~train$Survived, main="Passenger fate by sex",
+            SHADE=FALSE, col=c("Tomato", "lightgreen"),xlab="Sex", ylab="Survived")
+```
+
+Passenger fate by travelling class 
+
+```{r}
+table(train$Survived)
+
+table(train$Survived, train$Pclass)
+
+barplot( table(train$Survived, train$Pclass), col=c("Tomato", "lightgreen"),
+        legend = c("Perished", "Survived"), names= c("First", "Second", "Third"), 
+        main= "Passenger fate by Class" )
+
+```
+
+Corresponding Mosaic Plot
+
+```{r}
+mosaicplot(train$Pclass ~ train$Survived, main="Passenger fate by Pclass", 
+           shade=FALSE, color=c("tomato","lightgreen"), xlab="Pclass", ylab="Survived")
+
+
+```
+
+## Predicting passenger survival using Decision Tree
+
+For the modelling part, we will not take into account the following variables:   
+   
+* PassengerId: This is just an identifier for the passenger and doesn't bring any value. 
+* Ticket: This is just the ticket number and this doesn't add also any value 
+* cabin: This is a cabin identification number that is not relevant for this analysis 
+
+
+
+```{r}
+library(rpart)
+# Step 1: Build the maximal tree
+
+Tree <- rpart(Survived~Pclass + Sex + Age + SibSp + Parch + Fare + Embarked, data=train, 
+              method="class", control=rpart.control(minsplit=2,cp=0))
+
+#Tree
+```
+
+Summary
+r include=FALSE
+
+```{r}
+#summary(Tree)
+
+```
+
+Error on the maximal tree
+
+```{r}
+pred <- predict(Tree, type="class")
+error<-  1/length(train$Survived) * sum(train$Survived != pred )
+error
+```
+
+
+printcp 
+
+```{r}
+A <- printcp(Tree)
+
+```
+
+
+```{r}
+plotcp(Tree)
+
+```
+
+
+
+Step 2: Pruning 
+
+```{r}
+mincp <- which(A[,4] == min(A[,4]))
+mincp
+#cpthres: 1-SE rule threshold : Error_min + standard_error
+cpthres <- A[mincp,4] + A[mincp,5]
+cp1se <- min(which(A[,4] <= cpthres))
+#cp1se <- which(min(A[cand,4]) == A[,4])
+cp1se
+
+```
+The lower xerror is 0.44 with a standard error of 0.03. 
+When we apply the 1SE rule, we get 0.45 + 0.03 = 0.47 as threshold. 
+Therefore the final tree is the smaller tree (less splits)one with error lower than 0.47 
+It's the value corresponding to cp=0.00487329 (Id = 6). 
+The code above gives an accurate way to identify the cp corresponding to the 1SE cp rule. 
+
+
+
+
+
+Alternative method
+
+```{r}
+cverr=A[,4]
+mincverr=which(cverr==min(cverr))
+s=A[mincverr,4]+A[mincverr,5]
+s=min(s)
+B=1*(cverr<=s)
+a=min(which(B==1))
+a
+cp=A[a,1]
+cp 
+
+```
+
+
+
+```{r}
+#Treep <- prune(Tree, cp=A[5,1])
+Treep <- prune(Tree, cp=A[cp1se,1])
+plot(Treep)
+text(Treep)
+
+```
+Display a more fancy plot
+
+Install package and load library 
+
+```{r}
+#install.packages('rattle')
+#install.packages('rpart.plot')
+#install.packages('RColorBrewer')
+#library(rattle)
+
+```
+
+
+```{r}
+library(rattle)
+library(rpart.plot)
+library(RColorBrewer)
+
+```
+
+Tree plot
+
+```{r}
+fancyRpartPlot(Treep, tweak=1.4)
+
+```
+
+We see from the tree, that the most important variables are respectively: Sex, Age, Pclass and SibSp. 
+
+
+
+Prediction on the test set
+
+```{r}
+pred_dt <- predict(Treep, newdata=test, type="class")
+submit_dt <- data.frame(PassengerId = test$PassengerId, Survived = pred_dt)
+
+```
+
+Write submission
+
+```{r}
+write.csv(submit_dt, file = "submit_dt_02.csv", row.names = FALSE)
+```
+
+After submission, Kaggle score is 0.79425. 
+
+
+## Random Forest 
+
+```{r}
+library(randomForest)
+
+# Set seed for reproducibility
+set.seed(1234)
+Tree_rf <- randomForest(as.factor(Survived) ~ Pclass + Sex + Age + SibSp + Parch + 
+    Fare + Embarked, data=train, importance=TRUE, proximity=TRUE, ntree=1000)
+
+Tree_rf
+```
+Prediction 
+
+```{r}
+pred_rf <- predict(Tree_rf, newdata=test, type="class")
+submit_rf <- data.frame(PassengerId = test$PassengerId, Survived = pred_rf)
+
+```
+
+Write submission 
+
+```{r}
+write.csv(submit_rf, file = "submit_rf2.csv", row.names = FALSE)
+
+```
+
+The score for Random Forrest is 0.77990 and therefore worse that what we get for decision tree. 
+
+
+
+## Using CART without prior missing data inputation 
+
+We assume here that the train_raw data.frame is the raw data.frame with missing values: 
+
+
+
+```{r}
+summary(train_raw)
+
+```
+We confirm that we still have missing values for Age and Embarked fields.
+
+1. Build the maximal tree
+
+```{r}
+library(rpart)
+# Step 1: Build the maximal tree
+
+Tree_na <- rpart(Survived~Pclass + Sex + Age + SibSp + Parch + Fare + Embarked, data=train_raw, 
+              method="class", control=rpart.control(minsplit=2,cp=0))
+
+#Tree_na
+
+```
+
+printcp
+```{r}
+A_na <- printcp(Tree_na)
+```
+
+plotcp 
+
+```{r}
+plotcp(Tree_na)
+
+```
+
+
+```{r}
+mincp <- which(A_na[,4] == min(A_na[,4]))
+# as there are several min
+mincps <- min(mincp)
+#cpthres: 1-SE rule threshold : Error_min + standard_error
+cpthres <- A_na[mincps,4] + A_na[mincps,5]
+cp1se <- min(which(A_na[,4] <= cpthres))
+#cp1se <- which(min(A[cand,4]) == A[,4])
+cp1se
+```
+
+2. Pruning
+
+```{r}
+Tree_nap <- prune(Tree_na, cp=A_na[cp1se,1])
+plot(Tree_nap)
+text(Tree_nap)
+```
+
+Fancy tree plot
+
+```{r}
+
+fancyRpartPlot(Tree_nap, tweak=2.5)
+
+```
+
+Prediction on the test set
+
+```{r}
+pred_dt_na <- predict(Tree_nap, newdata=test_raw, type="class")
+submit_dt_na <- data.frame(PassengerId = test_raw$PassengerId, Survived = pred_dt_na)
+
+```
+
+Write submission
+
+```{r}
+write.csv(submit_dt_na, file = "submit_dt_na_02.csv", row.names = FALSE)
+```
+After submission, Kaggle score is 0.77511. 
+Therefore it's worse than model with missing values inputation. 
+
+
+## Using CART with the additional variable title
+
+```{r}
+# Step 1: Build the maximal tree
+
+Tree_title <- rpart(Survived~Pclass + Sex + Age + SibSp + Parch + Fare + Embarked + Title, data=train, 
+              method="class", control=rpart.control(minsplit=2,cp=0))
+
+#Tree
+```
+
+
+```{r}
+A_tl <- printcp(Tree_title)
+
+```
+
+
+```{r}
+plotcp(Tree_title)
+
+```
+
+
+```{r}
+mincp <- which(A_tl[,4] == min(A_tl[,4]))
+# as there are several min
+mincps <- min(mincp)
+#cpthres: 1-SE rule threshold : Error_min + standard_error
+cpthres <- A_tl[mincps,4] + A_tl[mincps,5]
+cp1se <- min(which(A_tl[,4] <= cpthres))
+#cp1se <- which(min(A[cand,4]) == A[,4])
+cp1se
+
+```
+
+Pruning 
+
+```{r}
+Tree_tlp <- prune(Tree_title, cp=A_tl[cp1se,1])
+plot(Tree_tlp)
+text(Tree_tlp)
+
+```
+
+```{r}
+fancyRpartPlot(Tree_tlp, tweak=1.0)
+
+```
+
+Prediction on the test set
+
+```{r}
+# Add an extra factor Dona. for title Dona.
+#levels(train$Title) <- c(levels(train$Title), "Dona.")
+pred_dt_tl <- predict(Tree_tlp, newdata=test, type="class")
+submit_dt_tl <- data.frame(PassengerId = test$PassengerId, Survived = pred_dt_tl)
+
+```
+
+Write submission
+
+```{r}
+write.csv(submit_dt_tl, file = "submit_dt_tl_01.csv", row.names = FALSE)
+```
+After submission, Kaggle score is 0.79425 
+
+
+# Conclusion
+
+We tried to predict the fate of passengers in the test set using several CART and Random Forrest models. We got the best score with the CART model with simple inputations for missing data. For this specific problem we were not able to get better results with Random Forrest models.
+
+
+
